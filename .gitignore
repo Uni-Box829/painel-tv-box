@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Project
+logs/
+*.log
+backups/
+bin/
+
+# scrcpy é runtime local (versões baixadas por máquina/SO — não versionar)
+scrcpy/
+scrcpy/versions/
+scrcpy/downloads/
+scrcpy/scrcpy*
+scrcpy/*.apk
+scrcpy/mpv_splits/
+
+# Ferramentas/agente (não versionar)
+.reasonix/
+reasonix.toml
+docs/.obsidian/
+
+# Arquivos não relacionados ao projeto
+*.xlsx
+*.docx
+scripts/gerar_relatorio_nobreaks.py
+
+# Config (keep template, ignore generated)
+config/mediamtx.generated.yml
+
+# Configuração e estado LOCAL — não versionar (cada máquina tem a sua)
+config/*.yml
+devices/*.yml
+groups/*.yml
+
+# Segredos
+config/.panel_token
+config/admin.json
+config/.session_secret
+
+# OS
+.DS_Store
+Thumbs.db
+
+docs/nobreak.md
+
+docs/Sem t*.md
+
+# artefatos de sessao/agente (nao versionar)
+*.jsonl
+pi-session-*.html
+*.pdf
+evidencias*/
