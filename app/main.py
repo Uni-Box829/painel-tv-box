@@ -268,3 +268,15 @@ async def serve_spa(full_path: str):
     if path.is_file():
         return FileResponse(path)
     return FileResponse(TEMPLATES_DIR / "base.html")
+
+from pathlib import Path
+
+@app.on_event("startup")
+async def show_panel_token():
+    token_file = Path("config/.panel_token")
+    if token_file.exists():
+        print(f"\n\n========================================")
+        print(f"==> TOKEN EXATO DO PAINEL: {token_file.read_text().strip()}")
+        print(f"========================================\n\n", flush=True)
+
+
