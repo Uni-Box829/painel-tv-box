@@ -1,8 +1,3 @@
-# ============================================================
-# Template de config — COPIE/EDITE localmente (não versionado)
-# O painel cria `system.yml` a partir deste template no 1º boot,
-# e a heartbeat_key é gerada automaticamente (não coloque aqui).
-# ============================================================
 server:
   host: 0.0.0.0
   port: 8080
@@ -28,4 +23,5 @@ mediamtx:
   timeout: 5
 security:
   enabled: true
-wizard_completed: false
+  heartbeat_key: "91406374"
+wizard_completed: true
