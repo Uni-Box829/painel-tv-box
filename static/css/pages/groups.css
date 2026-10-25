@@ -1,0 +1,110 @@
+/* Groups — cards de grupo */
+.groups-toolbar {
+    margin-bottom: var(--space-4);
+}
+
+.group-card {
+    margin-bottom: var(--space-3);
+    overflow: hidden;
+}
+
+.group-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    min-width: 0;
+}
+
+.group-icon {
+    font-size: 1.5em;
+    color: var(--text-secondary);
+    display: inline-flex;
+}
+
+.group-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.group-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.group-meta {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    margin-top: 2px;
+    overflow-wrap: anywhere;
+}
+
+.group-actions-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex-shrink: 0;
+    justify-content: flex-end;
+}
+
+.group-devices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 14px 14px;
+}
+
+.group-device-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.78em;
+    background: var(--bg-base);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    max-width: 100%;
+}
+
+.group-device-tag.success { color: var(--text-primary); }
+.group-device-tag.danger { color: var(--text-muted); }
+.group-device-tag.warning { color: var(--text-secondary); font-weight: 600; }
+
+@media (max-width: 720px) {
+    .group-header {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+    .group-actions-list {
+        width: 100%;
+        justify-content: flex-start;
+    }
+    .group-actions-list .btn {
+        flex: 1 1 92px;
+    }
+}
+
+/* Contadores de status por grupo (C2) */
+.group-counters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+.group-counters .dcard-counter {
+    font-size: 0.7em;
+    padding: 2px 8px;
+}
+.group-name a,
+a.group-name {
+    color: var(--text-primary);
+    text-decoration: none;
+}
+.group-name a:hover {
+    color: var(--text-secondary);
+    text-decoration: underline;
+}

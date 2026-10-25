@@ -1,0 +1,127 @@
+/* Device — página de detalhe do TV Box */
+.device-detail {
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.device-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    margin-bottom: var(--space-5);
+}
+
+.device-header .device-icon {
+    font-size: 2.5em;
+    color: var(--text-secondary);
+}
+
+.device-header .device-info h2 {
+    font-size: 1.3em;
+    font-weight: 600;
+}
+
+.device-header .device-info .device-location {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+
+.device-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-5);
+}
+
+.device-actions .btn {
+    font-size: 0.8em;
+    padding: 8px 14px;
+}
+
+.device-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
+}
+
+.device-grid .full {
+    grid-column: 1 / -1;
+}
+
+.device-info-card h3 {
+    font-size: 0.8em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: var(--space-3);
+}
+
+.device-screenshot img {
+    width: 100%;
+    max-height: 300px;
+    object-fit: contain;
+    background: var(--bg-inset);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.device-shell-output {
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.8em;
+    padding: var(--space-3);
+    border-radius: var(--radius-sm);
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    border: 1px solid var(--border-subtle);
+}
+
+.device-shell-input {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.device-shell-input input {
+    flex: 1;
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    padding: 8px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    outline: none;
+}
+
+.device-shell-input input:focus {
+    border-color: var(--focus-ring);
+}
+
+@media (max-width: 600px) {
+    .device-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Tabs do device (Fase B) */
+.device-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin: var(--space-4) 0 0;
+    overflow-x: auto;
+    padding-bottom: 0;
+}
+.device-tab-content {
+    margin-top: var(--space-4);
+}
+.device-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}

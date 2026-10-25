@@ -1,0 +1,842 @@
+"""API routes para dispositivos (TV Boxes)."""
+
+import asyncio
+from datetime import datetime
+import logging
+
+from fastapi import APIRouter, HTTPException, Request
+
+from app.models.device import DeviceConfig
+from app.utils.system import slugify, is_safe_package
+
+logger = logging.getLogger("devices")
+
+router = APIRouter(prefix="/api/devices", tags=["devices"])
+
+
+def _get_config():
+    import app.main
+
+    return app.main.config
+
+
+def _get_watchdog():
+    """Acessa o WatchdogManager ativo (None se não iniciado)."""
+    try:
+        import app.main
+
+        return getattr(app.main.app.state, "watchdog", None)
+    except Exception:
+        return None
+
+async def _sync_mediamtx(config, old_path: str | None = None, new_path: str | None = None):
+    """Regenera o config do MediaMTX e sincroniza rotas via API REST sem reiniciar o serviço."""
+    try:
+        config.generate_mediamtx_yml()
+        from app.managers.mediamtx import MediaMTXManager
+        mtx = MediaMTXManager(config)
+
+        hot_ok = True
+        try:
+            if old_path and old_path != new_path:
+                del_res = await mtx.delete_path(old_path)
+                if not del_res.get("success"):
+                    err = str(del_res.get("error", "")).lower()
+                    if "not found" not in err and "404" not in err:
+                        hot_ok = False
+            if new_path and new_path != old_path:
+                add_res = await mtx.add_path(new_path)
+                if not add_res.get("success"):
+                    err = str(add_res.get("error", "")).lower()
+                    if "already exists" not in err and "400" not in err:
+                        hot_ok = False
+        finally:
+            await mtx.close()
+
+        # O arquivo config/mediamtx.generated.yml foi atualizado para persistência.
+        # Não reiniciamos o serviço MediaMTX automaticamente durante operações CRUD normais
+        # para evitar interrupção de transmissões ativas em outros TV Boxes.
+        return hot_ok
+    except Exception as e:
+        logger.warning("Erro ao sincronizar rotas no MediaMTX: %s", e)
+        return False
+
+
+def _restart_mediamtx_service():
+    """Fallback para reiniciar o serviço do MediaMTX via NSSM/systemctl."""
+    import os
+    import subprocess
+    from app.utils.system import find_nssm
+
+    try:
+        if os.name == "nt":
+            nssm = find_nssm()
+            if nssm:
+                subprocess.Popen([nssm, "restart", "mediamtx"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.Popen(["systemctl", "restart", "mediamtx"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+async def _safe_sync_mediamtx(config, old_path: str | None = None, new_path: str | None = None):
+    """Invoca _sync_mediamtx lidando com mocks síncronos (ex: lambda cfg: None) ou coroutines."""
+    import inspect
+    try:
+        res = _sync_mediamtx(config, old_path=old_path, new_path=new_path)
+    except TypeError:
+        try:
+            res = _sync_mediamtx(config)
+        except Exception:
+            return False
+
+    if inspect.isawaitable(res):
+        return await res
+    return res
+
+
+@router.get("")
+async def list_devices():
+    config = _get_config()
+    return [d.model_dump() for d in config.devices]
+
+
+@router.post("/provision-all")
+async def provision_all():
+    """(Re-)instala scripts Android em TODOS os dispositivos (replicar updates)."""
+    config = _get_config()
+    from app.managers.adb import ADBManager
+    from app.services.provision import ProvisionService
+
+    provision = ProvisionService(adb_manager=ADBManager())
+    results = {}
+    ok = 0
+    for dev in config.devices:
+        try:
+            r = await provision.provision(dev)
+        except Exception as e:  # noqa: BLE001
+            r = {"success": False, "error": str(e)}
+        results[dev.id] = r
+        if r.get("success"):
+            ok += 1
+    return {"total": len(config.devices), "ok": ok, "results": results}
+
+
+@router.get("/{device_id}")
+async def get_device(device_id: str):
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+    return device.model_dump()
+
+
+@router.post("", status_code=201)
+async def create_device(data: dict):
+    config = _get_config()
+
+    # gera id se não informado
+    if not data.get("id"):
+        data["id"] = slugify(data.get("name", "tvbox") or "tvbox")
+
+    if config.get_device(data["id"]):
+        raise HTTPException(409, f"Dispositivo '{data['id']}' já existe")
+
+    try:
+        device = DeviceConfig(**data)
+    except Exception as e:
+        raise HTTPException(422, f"Erro de validação: {e}")
+
+    try:
+        config.add_device(device)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # Watchdog passa a monitorar o novo device (status/stream em tempo real)
+    watchdog = _get_watchdog()
+    if watchdog:
+        watchdog.add_device(device)
+
+    # Aplica o rtsp_path do novo device no MediaMTX
+    if device.rtsp_path:
+        await _safe_sync_mediamtx(config, new_path=device.rtsp_path)
+
+    # Auto-provision: tenta enviar scripts para o TV Box
+    try:
+        from app.managers.adb import ADBManager
+        from app.services.provision import ProvisionService
+
+        adb = ADBManager()
+        provision = ProvisionService(adb_manager=adb)
+        prov_result = await provision.provision(device)
+    except Exception:
+        prov_result = {"success": False, "error": "provision_auto_failed"}
+
+    return {
+        **device.model_dump(),
+        "provision": prov_result,
+    }
+
+
+@router.put("/{device_id}")
+async def update_device(device_id: str, data: dict):
+    config = _get_config()
+    if not config.get_device(device_id):
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    old_path = config.get_device(device_id).rtsp_path if config.get_device(device_id) else None
+    try:
+        updated = config.update_device(device_id, data)
+    except Exception as e:
+        raise HTTPException(422, f"Erro de validação: {e}")
+
+    if updated is None:
+        raise HTTPException(500, "Falha ao atualizar dispositivo")
+
+    # Se mudou IP, o watchdog precisa re-monitorar (o loop lê o config fresco
+    # a cada iteração, mas garante que a task existe)
+    watchdog = _get_watchdog()
+    if watchdog and ("ip" in data or "id" in data):
+        watchdog.remove_device(device_id)
+        watchdog.add_device(updated)
+
+    # Re-provisiona scripts/conf se mudou IP ou ID do device
+    if "ip" in data or "id" in data:
+        import asyncio
+
+        from app.managers.adb import ADBManager
+        from app.services.provision import ProvisionService
+
+        async def _reprovision():
+            try:
+                await ProvisionService(adb_manager=ADBManager()).provision(updated)
+            except Exception:
+                pass
+
+        asyncio.create_task(_reprovision())
+
+    # Se o rtsp_path mudou, regenera o MediaMTX
+    if updated.rtsp_path != old_path:
+        await _safe_sync_mediamtx(config, old_path=old_path, new_path=updated.rtsp_path)
+
+    return updated.model_dump()
+
+
+@router.delete("/{device_id}")
+async def delete_device(device_id: str):
+    config = _get_config()
+    device = config.get_device(device_id) if config else None
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+    old_path = device.rtsp_path
+    try:
+        config.delete_device(device_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    await _safe_sync_mediamtx(config, old_path=old_path)
+
+    # Watchdog para de monitorar o device removido
+    watchdog = _get_watchdog()
+    if watchdog:
+        watchdog.remove_device(device_id)
+
+    return {"deleted": device_id}
+
+
+# ── Stream & Web actions ──────────────────────────
+
+
+@router.post("/{device_id}/start-stream")
+async def device_start_stream(device_id: str, request: Request = None):
+    """Abre stream ou página web no dispositivo."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    from app.managers.adb import ADBManager
+    from app.managers.player import PlayerManager
+
+    adb = ADBManager()
+
+    panel_url = str(request.base_url).rstrip("/") if request else ""
+    player = PlayerManager(
+        adb_manager=adb,
+        players_config=config.players,
+        host_ip=config.system.host.ip if config.system else "192.168.254.102",
+        rtsp_port=config.mediamtx.server.rtsp_port if config.mediamtx and hasattr(config.mediamtx, "server") else 8554,
+        panel_port=config.system.server.port if config.system and hasattr(config.system, "server") else 8080,
+    )
+
+    result = await player.start(device, panel_url=panel_url)
+    return result
+
+
+@router.post("/{device_id}/stop-stream")
+async def device_stop_stream(device_id: str):
+    """Fecha stream ou página web no dispositivo."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    from app.managers.adb import ADBManager
+    from app.managers.player import PlayerManager
+
+    adb = ADBManager()
+    player = PlayerManager(adb_manager=adb, players_config=config.players)
+
+    result = await player.stop(device)
+    return result
+
+
+@router.get("/{device_id}/current-player")
+async def device_current_player(device_id: str):
+    """Verifica qual Activity está em foco no device."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    from app.managers.adb import ADBManager
+    from app.managers.player import PlayerManager
+
+    adb = ADBManager()
+    player = PlayerManager(adb_manager=adb, players_config=config.players)
+
+    result = await player.get_current_player(device)
+    return result
+
+
+@router.post("/{device_id}/provision")
+async def device_provision(device_id: str):
+    """(Re-)instala scripts Android no dispositivo."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    from app.managers.adb import ADBManager
+    from app.services.provision import ProvisionService
+
+    adb = ADBManager()
+    provision = ProvisionService(adb_manager=adb)
+    result = await provision.provision(device)
+    return result
+
+
+@router.get("/{device_id}/provision/verify")
+async def device_provision_verify(device_id: str):
+    """Verifica se scripts estão instalados no dispositivo."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    from app.managers.adb import ADBManager
+    from app.services.provision import ProvisionService
+
+    adb = ADBManager()
+    provision = ProvisionService(adb_manager=adb)
+    result = await provision.verify(device)
+    return result
+
+
+@router.get("/{device_id}/status")
+async def device_status(device_id: str):
+    """Retorna status completo do device via ADB (ping, ADB, root, modelo, Android)."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    from app.managers.adb import ADBManager
+
+    adb = ADBManager(
+        binary=config.system.adb.binary if config.system else "adb",
+        connect_timeout=config.system.adb.connect_timeout if config.system else 10,
+    )
+
+    # ── Regra ADB×scrcpy (§3.3): scrcpy ativo OU heartbeat fresco → ZERO ADB ──
+    from datetime import datetime, timedelta
+    from app.managers.scrcpy import ScrcpyManager
+
+    target = f"{device.ip}:{device.adb_port}"
+    hb_timeout = (config.watchdog.heartbeat_timeout if config.watchdog else 60) or 60
+    heartbeat_fresh = bool(
+        device.state.last_heartbeat
+        and (datetime.now() - device.state.last_heartbeat).total_seconds() < hb_timeout
+    )
+    if ScrcpyManager.is_device_active(target) or heartbeat_fresh:
+        # Resposta construída SEM ADB (o status em foco vem do heartbeat/estado)
+        device.state.status = "online"
+        device.state.last_seen = datetime.now()
+        return {
+            "ping": True,
+            "adb_connected": True,
+            "root": None,
+            "model": "",
+            "android": "",
+            "device_ip": device.ip,
+            "source": "heartbeat" if heartbeat_fresh else "scrcpy",
+        }
+
+    status = await adb.is_reachable(device.ip, device.adb_port)
+
+    # Atualiza state em memória
+    if status["adb_connected"]:
+        from datetime import datetime
+
+        device.state.status = "online"
+        device.state.last_seen = datetime.now()
+        # Activity real em foco (dumpsys) — quando não há scrcpy ativo
+        try:
+            from app.managers.scrcpy import ScrcpyManager
+
+            if ScrcpyManager.is_device_active(f"{device.ip}:{device.adb_port}"):
+                device.state.current_activity = device.state.current_activity or f"Android {status['android']}"
+            else:
+                out, _ = await adb.shell(
+                    device.ip,
+                    "dumpsys activity activities 2>/dev/null | grep -i ResumedActivity | head -1",
+                    port=device.adb_port,
+                    timeout=5,
+                )
+                device.state.current_activity = out.strip() if out and "ResumedActivity" in out else f"Android {status['android']}"
+        except Exception:
+            device.state.current_activity = f"Android {status['android']}"
+
+    return {
+        "device_id": device_id,
+        "ip": device.ip,
+        "adb_port": device.adb_port,
+        **status,
+    }
+
+
+@router.post("/{device_id}/shell")
+async def device_shell(device_id: str, data: dict):
+    """Executa comando adb shell no dispositivo."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    command = data.get("command", "")
+    if not command:
+        raise HTTPException(400, "Comando não informado")
+
+    from app.managers.adb import ADBManager
+
+    adb = ADBManager(binary=config.system.adb.binary if config.system else "adb")
+    output, code = await adb.shell(device.ip, command, port=device.adb_port)
+
+    return {"success": code == 0, "device_id": device_id, "command": command, "output": output, "exit_code": code}
+
+
+@router.post("/{device_id}/reboot")
+async def device_reboot(device_id: str):
+    """Reinicia o dispositivo Android."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    from app.managers.adb import ADBManager
+
+    adb = ADBManager()
+    await adb.reboot(device.ip, port=device.adb_port)
+    return {"success": True, "message": f"Reboot enviado para {device.ip}"}
+
+
+@router.get("/{device_id}/apps")
+async def device_apps(device_id: str):
+    """Lista apps de terceiros instalados no dispositivo."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    from app.managers.adb import ADBManager
+    adb = ADBManager()
+    output, code = await adb.shell(device.ip, "pm list packages -3", port=device.adb_port, timeout=15)
+
+    packages = []
+    if code == 0 and output:
+        for line in output.split("\n"):
+            line = line.strip()
+            if line.startswith("package:"):
+                pkg = line.replace("package:", "").strip()
+                packages.append({"package": pkg, "name": pkg.split(".")[-1] if "." in pkg else pkg})
+
+    return {"success": code == 0, "packages": sorted(packages, key=lambda x: x["name"]), "count": len(packages)}
+
+
+@router.post("/{device_id}/uninstall-app")
+async def device_uninstall_app(device_id: str, data: dict):
+    """Desinstala um app do dispositivo."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    package = (data.get("package") or "").strip()
+    if not package:
+        raise HTTPException(400, "Package name é obrigatório")
+    if not is_safe_package(package):
+        raise HTTPException(400, "Package name inválido")
+    from app.managers.adb import ADBManager
+    adb = ADBManager()
+    output, code = await adb.shell(device.ip, f"pm uninstall {package}", port=device.adb_port, timeout=15)
+
+    return {"success": code == 0, "package": package, "output": output.strip(), "exit_code": code}
+
+
+# ── Screenshot ──────────────────────────────────
+
+import time
+import uuid
+from pathlib import Path
+from typing import Optional
+from fastapi.responses import FileResponse
+from fastapi import UploadFile, File as FastAPIFile
+
+from app.utils.system import get_data_dir
+
+SCREENSHOTS_DIR = get_data_dir() / "screenshots"
+_screenshot_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_screenshot_lock(device_id: str) -> asyncio.Lock:
+    lock = _screenshot_locks.get(device_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _screenshot_locks[device_id] = lock
+    return lock
+
+
+async def _capture_device_screenshot(device, force: bool = False) -> Optional[Path]:
+    """Captura screenshot do TV Box e salva em SCREENSHOTS_DIR / f"{device.id}.png".
+
+    Protegido por lock assíncrono por dispositivo e respeita TTL de 4 segundos
+    se force=False. Respeita também a regra ADB x Scrcpy.
+    """
+    if not device or not device.ip:
+        return None
+
+    SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    local_path = SCREENSHOTS_DIR / f"{device.id}.png"
+
+    # Se scrcpy está ativo neste dispositivo, não roda ADB intrusivo (§3.3)
+    from app.managers.scrcpy import ScrcpyManager
+    target = f"{device.ip}:{device.adb_port}"
+    if ScrcpyManager.is_device_active(target):
+        return local_path if local_path.is_file() else None
+
+    lock = _get_screenshot_lock(device.id)
+    async with lock:
+        now = time.time()
+        # Se outra corrotina acabou de capturar enquanto esperávamos o lock
+        if not force and local_path.is_file() and (now - local_path.stat().st_mtime) < 4.0:
+            return local_path
+
+        from app.managers.adb import ADBManager
+        adb = ADBManager()
+
+        # 1. Garante conexão ADB com o TV Box
+        connected = await adb.connect(device.ip, port=device.adb_port)
+        if not connected:
+            logger.warning("Screenshot: falha ao conectar ADB em %s:%s", device.ip, device.adb_port)
+            return local_path if local_path.is_file() else None
+
+        # 2. Executa capture.sh ou fallback direto screencap
+        remote_path = "/sdcard/panel/screenshot.png"
+        output, code = await adb.shell(
+            device.ip,
+            "sh /data/local/tmp/panel/capture.sh",
+            port=device.adb_port,
+            timeout=8,
+        )
+
+        if code == 0 and "screenshot: salvo em " in output:
+            remote_path = output.split("screenshot: salvo em ")[-1].strip()
+        else:
+            # Fallback direto: cria diretório e executa screencap no shell do Android
+            fallback_cmd = "mkdir -p /sdcard/panel 2>/dev/null; screencap -p /sdcard/panel/screenshot.png"
+            await adb.shell(device.ip, fallback_cmd, port=device.adb_port, timeout=8)
+            remote_path = "/sdcard/panel/screenshot.png"
+
+        # 3. Pull para arquivo temporário local e atomic replace
+        tmp_local = SCREENSHOTS_DIR / f"{device.id}.tmp.png"
+        if tmp_local.is_file():
+            try:
+                tmp_local.unlink()
+            except Exception:
+                pass
+
+        success = await adb.pull(device.ip, remote_path, str(tmp_local), port=device.adb_port, timeout=10)
+
+        if success and tmp_local.is_file() and tmp_local.stat().st_size > 100:
+            try:
+                if local_path.is_file():
+                    local_path.unlink()
+                tmp_local.replace(local_path)
+                device.state.screenshot_path = str(local_path)
+                return local_path
+            except Exception as e:
+                logger.error("Erro ao salvar screenshot %s: %s", device.id, e)
+                if tmp_local.is_file():
+                    return tmp_local
+        else:
+            if tmp_local.is_file():
+                try:
+                    tmp_local.unlink()
+                except Exception:
+                    pass
+
+        return local_path if local_path.is_file() else None
+
+
+@router.post("/{device_id}/screenshot")
+async def device_screenshot_capture(device_id: str):
+    """Captura screenshot do dispositivo e retorna o caminho."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    local_path = await _capture_device_screenshot(device, force=True)
+    if local_path and local_path.is_file() and local_path.stat().st_size > 100:
+        return {
+            "success": True,
+            "screenshot_url": f"/api/devices/{device_id}/screenshot",
+            "size_bytes": local_path.stat().st_size,
+        }
+
+    return {"success": False, "error": "Falha ao capturar screenshot"}
+
+
+@router.get("/{device_id}/screenshot")
+async def device_screenshot_get(device_id: str, auto: bool = True):
+    """Retorna a screenshot do dispositivo.
+
+    Se auto=True (padrão) e o cache estiver vazio ou tiver mais de 4s,
+    tenta capturar sob demanda para popular os tiles do Mural e Dashboard.
+    """
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    local_path = SCREENSHOTS_DIR / f"{device_id}.png"
+    now = time.time()
+
+    # 1. Se existe cache recente (< 4s), retorna imediatamente
+    if local_path.is_file() and (now - local_path.stat().st_mtime) < 4.0:
+        return FileResponse(
+            local_path,
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
+    # 2. Se auto=True e o dispositivo tem IP, tenta capturar sob demanda
+    if auto and device.ip:
+        st = getattr(device.state, "status", "")
+        if st != "offline":
+            captured = await _capture_device_screenshot(device, force=False)
+            if captured and captured.is_file():
+                return FileResponse(
+                    captured,
+                    media_type="image/png",
+                    headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+                )
+
+    # 3. Fallback: se captura falhou ou device offline, serve a última imagem capturada salva
+    if local_path.is_file():
+        return FileResponse(
+            local_path,
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
+    # 4. Tenta path salvo no state
+    if device.state.screenshot_path:
+        p = Path(device.state.screenshot_path)
+        if p.is_file():
+            return FileResponse(
+                p,
+                media_type="image/png",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
+
+    raise HTTPException(404, "Nenhum screenshot encontrado. Dispositivo pode estar inacessível.")
+
+
+# ── Magisk Install ──────────────────────────────
+
+
+@router.post("/{device_id}/magisk/install")
+async def device_magisk_install(device_id: str, reboot: bool = True):
+    """Instala o Magisk no device de forma automatizada (roda em background).
+
+    Navega a UI do app via ADB (uiautomator + input tap). A única interação
+    necessária no box é aceitar o prompt de root do Magisk após o reboot.
+    Retorna 202 com o job id; progresso via WebSocket (type=magisk).
+    """
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    import asyncio
+
+    from app.managers.adb import ADBManager
+    from app.services.magisk_install import MagiskInstaller
+
+    adb = ADBManager()
+    hub = getattr(_get_app(), "state", None) and getattr(_get_app().state, "ws_hub", None)
+
+    async def send_event(ev: dict):
+        if hub:
+            try:
+                await hub.broadcast(ev)
+            except Exception:
+                pass
+
+    installer = MagiskInstaller(adb_manager=adb, send_event=send_event)
+
+    job_id = f"magisk-{device_id}-{uuid.uuid4().hex[:8]}"
+
+    async def _run():
+        result = await installer.install(device, reboot=reboot)
+        await send_event({
+            "type": "magisk",
+            "device_id": device_id,
+            "step": "done",
+            "message": "Concluído" if result.get("success") else "Falhou",
+            "result": result,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    asyncio.create_task(_run())
+    return {"accepted": True, "job": job_id, "device_id": device_id, "reboot": reboot}
+
+
+def _get_app():
+    import app.main
+
+    return app.main.app
+
+
+# ── APK Install ─────────────────────────────────
+
+
+@router.post("/{device_id}/command")
+async def device_command(device_id: str, data: dict):
+    """Enfileira comando para execução LOCAL no TV Box via heartbeat (Ideia 3).
+
+    O device puxa o comando no próximo POST /heartbeat e executa no próprio shell
+    (sh -c) — zero ADB painel→device, então o scrcpy nunca cai por ação do painel.
+    """
+    import shlex
+
+    from app.services import command_queue as cq
+    from app.managers.player import PlayerManager
+
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    action = (data.get("action") or "").strip()
+    if action == "reboot":
+        cmd = "reboot"
+    elif action in ("stop_stream", "stop_web", "stop_kiosk"):
+        pm = PlayerManager(
+            adb_manager=None,
+            players_config=config.players,
+            host_ip=config.system.host.ip if config.system else "192.168.254.102",
+        )
+        if getattr(device, "mode", "web") == "web":
+            browser_def = pm._get_browser_def(device.web_browser)
+            pkg = browser_def["force_stop"]
+        else:
+            player_def = pm._get_player_def(device.player or "vlc")
+            pkg = player_def.force_stop if player_def else (device.player or "org.videolan.vlc")
+        cmd = f"am force-stop {shlex.quote(pkg)}"
+    elif action in ("start_stream", "start_web", "restart_player", "restart_kiosk"):
+        pm = PlayerManager(
+            adb_manager=None,
+            players_config=config.players,
+            host_ip=config.system.host.ip if config.system else "192.168.254.102",
+            rtsp_port=config.mediamtx.server.rtsp_port if config.mediamtx and hasattr(config.mediamtx, "server") else 8554,
+            panel_port=config.system.server.port if config.system and hasattr(config.system, "server") else 8080,
+        )
+        cmd = pm.build_start_cmd(device)
+        if not cmd:
+            raise HTTPException(400, f"Comando de inicialização para '{device.id}' não pôde ser gerado")
+    else:
+        raise HTTPException(400, "Ação não suportada. Use: start_stream | stop_stream | restart_kiosk | reboot")
+
+    item = await cq.enqueue(device_id, action, cmd)
+    return {"queued": True, "id": item["id"], "action": action, "eta": "~20s (próximo heartbeat)"}
+
+
+@router.post("/{device_id}/install-apk")
+async def device_install_apk(device_id: str, file: UploadFile = FastAPIFile(...)):
+    """Faz upload e instala um APK no dispositivo."""
+    config = _get_config()
+    device = config.get_device(device_id)
+    if not device:
+        raise HTTPException(404, "Dispositivo não encontrado")
+
+    if not file.filename or not file.filename.endswith(".apk"):
+        raise HTTPException(400, "Arquivo precisa ser .apk")
+
+    # Limite de upload (200 MB) — evita exaustão de memória
+    MAX_APK_BYTES = 200 * 1024 * 1024
+    content = await file.read(MAX_APK_BYTES + 1)
+    if len(content) > MAX_APK_BYTES:
+        raise HTTPException(413, "APK muito grande (máx 200 MB)")
+
+    from app.managers.adb import ADBManager
+
+    adb = ADBManager()
+
+    # Salva APK temporariamente no data dir (fora do repo)
+    apk_dir = get_data_dir() / "apks"
+    apk_dir.mkdir(parents=True, exist_ok=True)
+    apk_path = apk_dir / f"{device_id}_{uuid.uuid4().hex[:8]}.apk"
+
+    # Escrita síncrona de dezenas de MB fora do event loop
+    await asyncio.to_thread(apk_path.write_bytes, content)
+
+    # Push para o TV Box
+    remote_apk = f"/data/local/tmp/panel/{apk_path.name}"
+    push_ok = await adb.push(device.ip, str(apk_path), remote_apk, port=device.adb_port, timeout=60)
+
+    if not push_ok:
+        apk_path.unlink(missing_ok=True)
+        raise HTTPException(500, "Falha ao enviar APK para o dispositivo")
+
+    # Instala via script
+    output, code = await adb.shell(
+        device.ip,
+        f"sh /data/local/tmp/panel/install_apk.sh {remote_apk}",
+        port=device.adb_port,
+        timeout=120,
+    )
+
+    # Limpa APK remoto
+    await adb.shell(device.ip, f"rm {remote_apk}", port=device.adb_port)
+
+    # Limpa APK local
+    apk_path.unlink(missing_ok=True)
+
+    success = code == 0 and "success" in output.lower()
+    return {
+        "success": success,
+        "filename": file.filename,
+        "output": output.strip(),
+        "exit_code": code,
+    }

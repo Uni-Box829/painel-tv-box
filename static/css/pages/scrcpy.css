@@ -1,0 +1,302 @@
+/* Scrcpy — versões, checklist de args */
+.scrcpy-version-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+}
+
+.scrcpy-version-name {
+    font-weight: 600;
+    font-size: 0.9em;
+    color: var(--text-primary);
+}
+
+.scrcpy-version-meta {
+    font-size: 0.75em;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.scrcpy-version-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.scrcpy-version-actions .btn {
+    font-size: 0.75em;
+    padding: 4px 10px;
+}
+
+.badge-warning {
+    font-size: 0.7em;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    margin-left: 8px;
+    vertical-align: middle;
+    border: 1px solid var(--border-strong);
+    color: var(--text-secondary);
+}
+
+.scrcpy-arg-grp {
+    margin-bottom: 10px;
+}
+
+.scrcpy-arg-title {
+    font-size: 0.85em;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.scrcpy-arg-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.scrcpy-arg-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-base);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 5px 10px;
+    cursor: pointer;
+    font-size: 0.8em;
+    transition: border-color var(--dur-fast) ease;
+}
+
+.scrcpy-arg-item:hover {
+    border-color: var(--text-secondary);
+}
+
+.scrcpy-arg-item input[type="checkbox"] {
+    accent-color: var(--text-primary);
+}
+
+.scrcpy-arg-item code {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+.scrcpy-arg-item:has(input:checked) {
+    border-color: var(--text-primary);
+    background: var(--control-hover);
+}
+
+/* Versão ativa destacada (D3) */
+.scrcpy-version-item.active {
+    border-color: var(--text-primary);
+    box-shadow: inset 0 0 0 1px var(--text-primary);
+}
+.scrcpy-version-item.active .scrcpy-version-name {
+    color: var(--text-primary);
+}
+
+.scrcpy-enrollment-heading,
+.scrcpy-enrollment-summary,
+.scrcpy-enrollment-device {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.scrcpy-enrollment-heading {
+    margin-bottom: 12px;
+}
+
+.scrcpy-enrollment-item {
+    padding: 12px 0;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.scrcpy-enrollment-item:first-child {
+    border-top: 0;
+}
+
+.scrcpy-enrollment-devices {
+    margin-top: 10px;
+    padding-left: 12px;
+}
+
+.scrcpy-enrollment-device {
+    padding: 6px 0;
+}
+
+/* ── Bloco de ajuda "Como usar o Acesso Remoto" ── */
+.scrcpy-help {
+    margin-top: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-inset);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 0.8em;
+    color: var(--text-muted);
+}
+
+.scrcpy-help-title {
+    font-size: 1.05em;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.scrcpy-help-lead {
+    margin: 6px 0 0;
+    line-height: 1.6;
+}
+
+.scrcpy-help-lead strong {
+    color: var(--text-secondary);
+}
+
+.scrcpy-help-group {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-subtle);
+}
+
+.scrcpy-help-group-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.scrcpy-help-tag,
+.scrcpy-help-rec {
+    font-size: 0.85em;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 1px 7px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.scrcpy-help-rec {
+    border-color: var(--text-primary);
+    color: var(--text-primary);
+}
+
+.scrcpy-help-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.scrcpy-help-list li {
+    margin-bottom: var(--space-2);
+    padding: var(--space-1) 0 var(--space-1) var(--space-3);
+    border-left: 2px solid var(--border-strong);
+    line-height: 1.6;
+}
+
+.scrcpy-help-list li:last-child {
+    margin-bottom: 0;
+}
+
+.scrcpy-help-list strong {
+    color: var(--text-primary);
+}
+
+.scrcpy-help code {
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+    color: var(--text-secondary);
+    word-break: break-word;
+}
+
+.scrcpy-help-note {
+    margin: var(--space-3) 0 0;
+    padding: var(--space-2) var(--space-3);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    line-height: 1.6;
+}
+
+.scrcpy-help-note strong {
+    color: var(--text-secondary);
+}
+
+@media (max-width: 560px) {
+    .scrcpy-enrollment-heading,
+    .scrcpy-enrollment-summary {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+}
+
+/* ── Sessão scrcpy v2 ── */
+.session {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 330px;
+    gap: 14px;
+    align-items: start;
+}
+.screen-big {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg-inset);
+}
+.screen-big .canvas {
+    aspect-ratio: 16/9;
+    position: relative;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+}
+.screen-big .canvas img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.screen-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border-subtle);
+    flex-wrap: wrap;
+}
+.screen-bar .sp { flex: 1; }
+.tabs {
+    display: flex;
+    gap: 4px;
+    padding: 10px 12px 0;
+    border-bottom: 1px solid var(--border-subtle);
+}
+.tab {
+    padding: 7px 11px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    background: none;
+    border-top: 0;
+    border-left: 0;
+    border-right: 0;
+}
+.tab.on,
+.tab:hover {
+    color: var(--text-primary);
+}
+.tab.on {
+    border-bottom-color: var(--text-primary);
+}
+.tabpane { padding: 12px 14px; }
+
