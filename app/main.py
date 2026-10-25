@@ -270,17 +270,15 @@ async def serve_spa(full_path: str):
     return FileResponse(TEMPLATES_DIR / "base.html")
 
 from pathlib import Path
+import asyncio
 
 @app.on_event("startup")
 async def show_panel_token():
+    await asyncio.sleep(2)
     token_file = Path("config/.panel_token")
     token_file.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Se o token não existir, criamos um token fixo conhecido
-    if not token_file.exists():
-        token_file.write_text("meu_token_render_SkyUjG51OaO90wVhUPCfivlcgIqAEc6mn2RXRz-mYcA")
-        
+    # Definimos um token fixo e fácil para entrar imediatamente
+    token_file.write_text("meu_token_secreto_SkyUjG51OaO90wVhUPCfivlcgIqAEc6mn2RXRz-mYcA")
     print(f"\n\n========================================")
-    print(f"==> TOKEN EXATO PARA ENTRAR: {token_file.read_text().strip()}")
+    print(f"==> USE ESTE TOKEN PARA ENTRAR: meu_token_secreto_123")
     print(f"========================================\n\n", flush=True)
-
