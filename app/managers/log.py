@@ -38,7 +38,7 @@ class LogManager:
 
     def __init__(self, log_dir: Optional[Path] = None):
         self.log_dir = log_dir or LOG_DIR
-        self.log_dir.mkdir(exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
         self._loggers: dict[str, logging.Logger] = {}
 
     def setup(self):
