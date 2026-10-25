@@ -3,3 +3,4 @@ uvicorn
 flask
 PyYAML
 python-multipart
+httpx
