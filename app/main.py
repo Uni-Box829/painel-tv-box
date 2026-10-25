@@ -274,9 +274,13 @@ from pathlib import Path
 @app.on_event("startup")
 async def show_panel_token():
     token_file = Path("config/.panel_token")
-    if token_file.exists():
-        print(f"\n\n========================================")
-        print(f"==> TOKEN EXATO DO PAINEL: {token_file.read_text().strip()}")
-        print(f"========================================\n\n", flush=True)
-
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Se o token não existir, criamos um token fixo conhecido
+    if not token_file.exists():
+        token_file.write_text("meu_token_render_SkyUjG51OaO90wVhUPCfivlcgIqAEc6mn2RXRz-mYcA")
+        
+    print(f"\n\n========================================")
+    print(f"==> TOKEN EXATO PARA ENTRAR: {token_file.read_text().strip()}")
+    print(f"========================================\n\n", flush=True)
 
