@@ -2,3 +2,4 @@ fastapi
 uvicorn
 flask
 PyYAML
+python-multipart
