@@ -23,5 +23,5 @@ mediamtx:
   timeout: 5
 security:
   enabled: true
-  heartbeat_key: "minha_chave_secreta_91406374"
+  heartbeat_key: "91406374"
 wizard_completed: true
